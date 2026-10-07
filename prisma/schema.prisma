@@ -1,0 +1,34 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MafftJob {
+  id String @id @unique // hash-derived job id: sha256(canonical input [+ existing alignment]) + validated options
+
+  // input, kept for provenance/reproducibility and worker re-materialization
+  parameters        Json // StoredJobParameters: validated options + input sha256s + input stats
+  inputFilename     String // uploaded filename, or "pasted.fasta"
+  inputData         Bytes // canonical FASTA (src/lib/sequences/fasta.ts toCanonicalFasta)
+  existingAlnData   Bytes? // mode "add" only: the alignment the input is added to
+  notifyEmail       String? // optional - sent a completion/failure notification if SMTP is configured
+
+  submitted DateTime  @default(now())
+  started   DateTime?
+  finished  DateTime?
+  err       String?
+
+  // outputs
+  stderr          String? // MAFFT's progress log
+  summary         Json? // AlignmentSummary (src/lib/alignment/summary.ts)
+  alignmentFasta  String? // canonical output; Clustal/PHYLIP are rendered from it at download time
+  guideTreeNewick String? // --treeout, leaf labels restored to the input IDs
+  resultsZip      Bytes? // zip of alignment + guide tree + log
+  resultsZipBytes Int? // size of resultsZip, so the UI can show it without loading the blob
+
+  @@map("mafftjob")
+}

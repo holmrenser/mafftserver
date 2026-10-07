@@ -1,0 +1,27 @@
+inputfile = orig
+3 x 5 - 4 d
+outputhat23=16
+treein = 0
+compacttree = 0
+stacksize: 8192 kb
+generating a scoring matrix for nucleotide (dist=200) ... done
+All-to-all alignment.
+    0 / 3 (by thread   0) tbfast-pair (nuc) Version 7.525
+alg=L, model=DNA200 (2), 2.00 (6.00), -0.10 (-0.30), noshift, amax=0.0
+1 thread(s)
+
+outputhat23=16
+Loading 'hat3.seed' ... 
+done.
+Writing hat3 for iterative refinement
+generating a scoring matrix for nucleotide (dist=200) ... done
+Gap Penalty = -1.53, +0.00, +0.00
+tbutree = 1, compacttree = 0
+Constructing a UPGMA tree ... 
+    0 / 3
+done.
+
+#################################################################################
+# ERROR!                                                                        #
+# The original   2 sequences must be aligned                                    #
+#################################################################################

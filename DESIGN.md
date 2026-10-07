@@ -84,9 +84,9 @@ Browser -> Next.js app (submit form, results page, API routes)
 | Deploy | Docker Compose: `postgres` -> one-shot `migrate` -> `app` + N `mafftworker` replicas; `NEXT_PUBLIC_BASE_PATH` subpath support |
 | CI | blastserver's GitHub Actions workflow (lint, typecheck worker, build, unit + integration against a Postgres service, push SHA-tagged images to GHCR on `main`) |
 
-Also adopt from blastserver: `.env.example` with every key documented,
-`CONTRIBUTING.md`, and `src/proxy.ts` CORS allowlist (`CORS_ALLOW_ORIGIN`). The
-CORS allowlist is what makes the cross-app handoffs below possible.
+Also adopt from blastserver: `.env.example` with every key documented and
+`CONTRIBUTING.md`. blastserver's `src/proxy.ts` CORS allowlist only matters for
+the cross-app handoffs, so it waits for the monorepo discussion (Decision 3).
 
 ## Project layout
 
@@ -105,9 +105,11 @@ worker/processors/mafft.ts     materialize input -> spawn -> parse -> persist ->
 src/app/page.tsx               submission form
 src/app/jobs/[id]/             results page (Server Component) + client islands:
   results-poller.tsx             same as iqtreeserver
+  results-views.tsx              tabs + the row-order store shared by alignment and tree
   alignment-panel.tsx            "use client" wrapper around react-bio-viz MultipleSequenceAlignment
   guide-tree-panel.tsx           "use client" wrapper around react-bio-viz PhyloTree
-src/components/use-element-width.ts   ResizeObserver hook (react-bio-viz takes pixel width/height)
+  column-stats.tsx               analyseColumns counts (client component, see Integration notes)
+src/hooks/use-element-width.ts ResizeObserver hook (react-bio-viz takes pixel width/height)
 src/app/api/{submit,jobs/[id],jobs/[id]/download,queue,health,ready}/route.ts
 ```
 
@@ -145,9 +147,9 @@ model MafftJob {
 expensive: mean pairwise identity is O(N²·L), so the worker computes it once,
 sampling pairs above a size cap. Column classes (conserved / variable /
 parsimony-informative) come from react-bio-viz's pure `analyseColumns` at render
-time in the results Server Component. It is O(N·L) and safe to run on the server
-(react-bio-viz's build checks that rendering works without a DOM). Nothing else
-needs storing.
+time. It is O(N·L), so nothing else needs storing. It has to run in a client
+component (still server-rendered), not the Server Component itself: see
+[Integration notes](#integration-notes).
 
 Only aligned FASTA is stored. Clustal and PHYLIP are rendered from it in
 `src/lib/alignment/formats.ts` at download time. They are cheap pure functions,
@@ -224,8 +226,9 @@ can't be trusted:
    identity (rows are keyed by `header` unless given an `id`), and any
    downstream IQ-TREE run.
 3. **Reject** characters outside the IUPAC alphabet (plus `-`, `*`, `.`), and
-   report which sequence and position. MAFFT fails these with only `Illegal
-   character j` and exit 1, which is useless to an end user.
+   report which sequence and position. This check is the *only* guard: with
+   `--preservecase` (always on), MAFFT v7.525 silently aligns any symbol,
+   `!` included. Without it, MAFFT fails with only `Illegal character j`.
 4. **Detect** nucleotide vs protein (>90% ACGTUN -> nucleotide). This preselects
    `sequenceType` and filters the matrix dropdown.
 5. **Warn, don't block**: input already contains gaps ("this looks aligned; did
@@ -238,18 +241,27 @@ differences still dedupe.
 # Worker
 
 `worker/processors/mafft.ts` follows iqtreeserver's processor step for step.
-There are two differences:
+The differences:
 
-- **Stdout goes straight to a file.** MAFFT writes the alignment to stdout.
-  Spawn with `stdio: ["ignore", outFd, "pipe"]` instead of buffering it, so
-  `MAX_BUFFER_BYTES` only has to bound stderr. Large alignments can't hit the
-  buffer cap.
+- **Stdout and stderr both go straight to files** (`stdio: ["ignore", outFd,
+  errFd]`). Stdout is the alignment, so it can be any size. Stderr *must* be a
+  regular file: `mafft` is a shell script that writes progress to
+  `/dev/stderr`, and Node's piped stdio is a socketpair, which `/dev/stderr`
+  can't be opened on (ENXIO). MAFFT then fails before aligning anything. The
+  smoke tests caught this. As a result there's no `MAX_BUFFER_BYTES`.
+- **MAFFT's scratch dir lives in the job dir.** MAFFT `mktemp`s under
+  `$TMPDIR`, which falls back to the *current directory* when unset, and
+  failed runs don't clean up. So the worker runs MAFFT with
+  `TMPDIR=MAFFT_TMPDIR=<workDir>`, and the leftovers go when the workDir is
+  removed. (Found when the failing smoke runs left `mafft.XXXXXXXXXX` dirs in
+  the repo root.)
 - **Guide tree un-mangling.** `--treeout` writes `<input>.tree` with labels like
   `1_seqA_some_description`, split across lines. Strip newlines, then map the
   numeric prefix back to the original ID by input index before storing.
 
 Failure path: on non-zero exit, look for MAFFT's known error lines (`Illegal
-character`, out-of-memory) and turn them into one human-readable sentence
+character`, an unaligned existing alignment in add mode (two wordings),
+out-of-memory) and turn them into one human-readable sentence
 followed by the stderr tail, the same as iqtreeserver's `IqtreeRunError`.
 
 Timeouts: most MAFFT jobs finish in seconds and a big `auto` job in minutes, so
@@ -364,11 +376,15 @@ If we need them, promote them into the library instead of copying them.
 
 ## Integration notes
 
-- **Client-only drawing, server-safe import.** The panels are `"use client"`
-  islands, and the results page stays a Server Component passing data down, as
-  in iqtreeserver. react-bio-viz is safe to import on the server, and its build
-  checks rendering to a string, so the page can still use its pure helpers
-  (`analyseColumns`).
+- **Client components only.** The panels are `"use client"` islands, and the
+  results page stays a Server Component passing data down, as in iqtreeserver.
+  react-bio-viz server-*renders* fine inside client components, but it
+  **can't be imported into a Server Component**. Its bundle calls
+  `React.createContext` at load, and the react-server build of React doesn't
+  have it. That includes the pure helpers like `analyseColumns`. (`next build`
+  fails with `createContext is not a function`.) Possible upstream fix: a
+  `"use client"` banner on the bundle, plus a separate DOM-free entry point for
+  the pure helpers (e.g. `react-bio-viz/analysis`).
 - **Styles.** Import `react-bio-viz/style.css` once in `layout.tsx` so the
   toolbars are styled before hydration. Otherwise they flash, because the
   injected `<style>` only arrives with the JS.
@@ -380,11 +396,11 @@ If we need them, promote them into the library instead of copying them.
 - **Sizing.** Components take pixel `width`/`height`, so one shared
   `useElementWidth` (ResizeObserver) hook drives both panels, following the
   pattern in react-bio-viz's Getting Started guide.
-- **Large alignments.** Passing `alignmentFasta` as a prop serializes it into
-  the RSC payload. That's fine up to a few MB. Above a threshold
-  (`INLINE_ALIGNMENT_MAX_BYTES`), the panel instead fetches it from
-  `GET /api/jobs/[id]/alignment` with SWR, which the IQ-TREE handoff needs
-  anyway.
+- **Large alignments (not built yet).** Passing the alignment as a prop
+  serializes it into the RSC payload. That's fine up to a few MB. Above a
+  threshold (`INLINE_ALIGNMENT_MAX_BYTES`), the panel should fetch it from
+  `GET /api/jobs/[id]/download?format=fasta` with SWR instead. The scaffold
+  always passes it inline.
 
 ## Dependency status
 
