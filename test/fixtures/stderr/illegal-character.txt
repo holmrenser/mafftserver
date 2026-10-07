@@ -1,0 +1,17 @@
+outputhat23=16
+treein = 0
+compacttree = 0
+stacksize: 8192 kb
+generating a scoring matrix for nucleotide (dist=200) ... done
+========================================================================= 
+========================================================================= 
+=== 
+=== Alphabet 'j' is unknown.
+=== Please check site 5 in sequence 1.
+=== 
+=== To make an alignment that has unusual characters (U, @, #, etc), try  
+=== % mafft --anysymbol input > output
+=== 
+========================================================================= 
+========================================================================= 
+Illegal character j

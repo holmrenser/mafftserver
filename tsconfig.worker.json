@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "worker/**/*.ts",
+    "src/lib/queue.ts",
+    "src/lib/prisma.ts",
+    "src/lib/storage.ts",
+    "src/lib/hash.ts",
+    "src/lib/env.ts",
+    "src/lib/email.ts",
+    "src/lib/mafft/**/*.ts",
+    "src/lib/sequences/**/*.ts",
+    "src/lib/alignment/**/*.ts",
+    "src/generated/**/*.ts"
+  ],
+  "exclude": ["node_modules", "src/app", "src/components"]
+}

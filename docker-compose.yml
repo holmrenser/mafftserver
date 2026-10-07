@@ -1,0 +1,78 @@
+x-shared-env: &shared-env
+  DATABASE_URL: postgresql://mafftserver:mafftserver@postgres:5432/mafftserver
+  JOB_RETRY_LIMIT: ${JOB_RETRY_LIMIT:-2}
+  JOB_EXPIRE_SECONDS: ${JOB_EXPIRE_SECONDS:-2700}
+  PGBOSS_MAX_CONNECTIONS: ${PGBOSS_MAX_CONNECTIONS:-5}
+  MAFFT_JOB_TIMEOUT_MS: ${MAFFT_JOB_TIMEOUT_MS:-1800000}
+  MAFFT_WORKER_THREADS: ${MAFFT_WORKER_THREADS:-4}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+  MAX_SEQUENCES: ${MAX_SEQUENCES:-20000}
+  MAX_RESULTS_ZIP_BYTES: ${MAX_RESULTS_ZIP_BYTES:-209715200}
+  DATA_DIR: /data
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SMTP_FROM: ${SMTP_FROM:-mafftserver <no-reply@mafftserver.local>}
+  APP_URL: ${APP_URL:-http://localhost:3000}
+
+services:
+  postgres:
+    image: postgres:15.4
+    environment:
+      POSTGRES_USER: mafftserver
+      POSTGRES_PASSWORD: mafftserver
+      POSTGRES_DB: mafftserver
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mafftserver"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: app.Dockerfile
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://mafftserver:mafftserver@postgres:5432/mafftserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: app.Dockerfile
+      args:
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      <<: *shared-env
+      # Also needed at runtime, not just as a build arg: `next start`
+      # re-evaluates next.config.ts on boot for server-side route matching.
+      # Without it the server routes as if basePath were unset while the
+      # client bundle uses the prefixed paths baked in at build time.
+      NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  mafftworker:
+    build:
+      context: .
+      dockerfile: worker.Dockerfile
+    deploy:
+      replicas: 2
+    environment:
+      <<: *shared-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
